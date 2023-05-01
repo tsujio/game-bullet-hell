@@ -1,17 +1,20 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"strconv"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 	"github.com/samber/lo"
+	"github.com/tsujio/game-bullet-hell/touchutil"
 	"github.com/tsujio/game-util/mathutil"
-	"github.com/tsujio/game-util/touchutil"
 )
 
 const (
@@ -33,6 +36,7 @@ type Bullet struct {
 	pos *mathutil.Vector2D
 	r   float64
 	v   *mathutil.Vector2D
+	hit bool
 }
 
 func (b *Bullet) Draw(dst *ebiten.Image) {
@@ -48,39 +52,52 @@ func (p *Player) Draw(dst *ebiten.Image) {
 	vector.DrawFilledCircle(dst, float32(p.pos.X), float32(p.pos.Y), float32(p.r), color.Black, true)
 }
 
+type Touch struct {
+	id  []byte
+	pos *mathutil.Vector2D
+}
+
 type Game struct {
-	touchContext *touchutil.TouchContext
-	random       *rand.Rand
-	ticks        uint64
-	touchBasePos *mathutil.Vector2D
-	player       *Player
-	bullets      []*Bullet
-	enemies      []*Enemy
+	touches         []touchutil.Touch
+	random          *rand.Rand
+	ticks           uint64
+	touchPosHistory []*mathutil.Vector2D
+	player          *Player
+	bullets         []*Bullet
+	enemies         []*Enemy
 }
 
 func (g *Game) Update() error {
-	g.touchContext.Update()
+	g.touches = touchutil.AppendNewTouches(g.touches)
 
 	g.ticks++
 
-	if g.touchContext.IsJustTouched() {
-		p := g.touchContext.GetTouchPosition()
-		g.touchBasePos = mathutil.NewVector2D(float64(p.X), float64(p.Y))
-	}
+	if len(g.touches) > 0 {
+		if g.touches[0].IsJustReleased() {
+			g.touchPosHistory = make([]*mathutil.Vector2D, 60)
+		} else {
+			curr := g.touches[0].Position()
+			g.touchPosHistory[g.ticks%uint64(len(g.touchPosHistory))] = curr
+			if prev := g.touchPosHistory[(g.ticks-1)%uint64(len(g.touchPosHistory))]; prev != nil {
+				diff := curr.Sub(prev)
+				if norm := diff.Norm(); norm > 0 {
+					g.player.pos = g.player.pos.Add(diff)
 
-	if g.touchContext.IsBeingTouched() {
-		p := g.touchContext.GetTouchPosition()
-		curr := mathutil.NewVector2D(float64(p.X), float64(p.Y))
-		diff := curr.Sub(g.touchBasePos)
-		if norm := diff.Norm(); norm > 0 {
-			d := diff.Normalize().Mul(0.8)
-			if norm > 20 {
-				d = d.Mul(2.0)
+					if g.player.pos.X < 0 {
+						g.player.pos.X = 0
+					}
+					if g.player.pos.X > screenWidth {
+						g.player.pos.X = screenWidth
+					}
+					if g.player.pos.Y < 0 {
+						g.player.pos.Y = 0
+					}
+					if g.player.pos.Y > screenHeight {
+						g.player.pos.Y = screenHeight
+					}
+				}
 			}
-			g.player.pos = g.player.pos.Add(d)
 		}
-	} else {
-		g.touchBasePos = nil
 	}
 
 	if g.ticks == 1 {
@@ -104,13 +121,30 @@ func (g *Game) Update() error {
 		}
 	}
 
+	for _, b := range g.bullets {
+		if math.Pow(b.pos.X-g.player.pos.X, 2)+math.Pow(b.pos.Y-g.player.pos.Y, 2) < math.Pow(b.r+g.player.r, 2) {
+			b.hit = true
+
+			g.player.pos = mathutil.NewVector2D(
+				screenWidth/2,
+				screenHeight*2/3,
+			)
+
+			break
+		}
+	}
+
 	g.bullets = lo.Map(g.bullets, func(b *Bullet, _ int) *Bullet {
 		b.pos = b.pos.Add(b.v)
 		return b
 	})
 
 	g.bullets = lo.Filter(g.bullets, func(b *Bullet, _ int) bool {
-		return b.pos.Sub(mathutil.NewVector2D(screenWidth/2, screenHeight/2)).Norm() < 500
+		return !b.hit && b.pos.Sub(mathutil.NewVector2D(screenWidth/2, screenHeight/2)).Norm() < 500
+	})
+
+	g.touches = lo.Filter(g.touches, func(t touchutil.Touch, _ int) bool {
+		return !t.IsJustReleased()
 	})
 
 	return nil
@@ -129,10 +163,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	g.player.Draw(screen)
 
-	if g.touchBasePos != nil {
-		vector.StrokeCircle(screen, float32(g.touchBasePos.X), float32(g.touchBasePos.Y), 20, 2, color.Black, true)
-		vector.StrokeCircle(screen, float32(g.touchBasePos.X), float32(g.touchBasePos.Y), 40, 1, color.Black, true)
-	}
+	ebitenutil.DebugPrint(screen, fmt.Sprintf("%.1f", ebiten.ActualFPS()))
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
@@ -140,7 +171,8 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func (g *Game) initialize() {
-	g.touchBasePos = nil
+	g.touches = nil
+	g.touchPosHistory = make([]*mathutil.Vector2D, 60)
 	g.player = &Player{
 		pos: mathutil.NewVector2D(
 			screenWidth/2,
@@ -162,9 +194,8 @@ func main() {
 	ebiten.SetWindowTitle("Bullet Hell")
 
 	game := &Game{
-		touchContext: touchutil.CreateTouchContext(),
-		random:       rand.New(rand.NewSource(seed)),
-		ticks:        0,
+		random: rand.New(rand.NewSource(seed)),
+		ticks:  0,
 	}
 	game.initialize()
 
