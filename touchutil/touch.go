@@ -1,8 +1,6 @@
 package touchutil
 
 import (
-	"fmt"
-
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/tsujio/game-util/mathutil"
@@ -14,52 +12,57 @@ var (
 
 func AppendNewTouches(touches []Touch) []Touch {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		found := false
-		for _, t := range touches {
-			if m, ok := t.(*mouseButtonPress); ok && m.id == ebiten.MouseButtonLeft {
-				found = true
-				break
-			}
-		}
-		if !found {
-			touches = append(touches, &mouseButtonPress{
-				id: ebiten.MouseButtonLeft,
-			})
-		}
+		touches = append(touches, &mouseButtonPress{
+			id: ebiten.MouseButtonLeft,
+		})
 	}
 
 	justScreenTouchedIDs = inpututil.AppendJustPressedTouchIDs(justScreenTouchedIDs[:0])
 	for _, id := range justScreenTouchedIDs {
-		found := false
-		for _, t := range touches {
-			if s, ok := t.(*screenTouch); ok && s.id == id {
-				found = true
-				break
-			}
-		}
-		if !found {
-			touches = append(touches, &screenTouch{
-				id: id,
-			})
-		}
+		touches = append(touches, &screenTouch{
+			id: id,
+		})
 	}
 
 	return touches
 }
 
+type TouchType int
+
+const (
+	TouchTypeMouseButtonPress = iota
+	TouchTypeScreenTouch
+)
+
+type TouchID struct {
+	touchType TouchType
+	apiID     any
+}
+
 type Touch interface {
-	ID() []byte
+	Update()
+	ID() TouchID
 	IsJustTouched() bool
 	IsJustReleased() bool
 	Position() *mathutil.Vector2D
+	PreviousPosition() *mathutil.Vector2D
 }
 
 type mouseButtonPress struct {
-	id ebiten.MouseButton
+	id           ebiten.MouseButton
+	pos, prevPos *mathutil.Vector2D
 }
 
-func (m *mouseButtonPress) ID() []byte {
-	return []byte(fmt.Sprintf("mouse-%d", m.id))
+func (m *mouseButtonPress) Update() {
+	if m.pos != nil {
+		m.prevPos = m.pos.Clone()
+	}
+	x, y := ebiten.CursorPosition()
+	m.pos = mathutil.NewVector2D(float64(x), float64(y))
+}
+
+func (m *mouseButtonPress) ID() TouchID {
+	return TouchID{touchType: TouchTypeMouseButtonPress, apiID: m.id}
 }
 
 func (m *mouseButtonPress) IsJustTouched() bool {
@@ -71,16 +74,33 @@ func (m *mouseButtonPress) IsJustReleased() bool {
 }
 
 func (m *mouseButtonPress) Position() *mathutil.Vector2D {
-	x, y := ebiten.CursorPosition()
-	return mathutil.NewVector2D(float64(x), float64(y))
+	return m.pos
+}
+
+func (m *mouseButtonPress) PreviousPosition() *mathutil.Vector2D {
+	return m.prevPos
 }
 
 type screenTouch struct {
-	id ebiten.TouchID
+	id           ebiten.TouchID
+	pos, prevPos *mathutil.Vector2D
 }
 
-func (s *screenTouch) ID() []byte {
-	return []byte(fmt.Sprintf("screen-%d", s.id))
+func (s *screenTouch) Update() {
+	if s.pos != nil {
+		s.prevPos = s.pos.Clone()
+	}
+	var x, y int
+	if s.IsJustReleased() {
+		x, y = inpututil.TouchPositionInPreviousTick(s.id)
+	} else {
+		x, y = ebiten.TouchPosition(s.id)
+	}
+	s.pos = mathutil.NewVector2D(float64(x), float64(y))
+}
+
+func (s *screenTouch) ID() TouchID {
+	return TouchID{touchType: TouchTypeScreenTouch, apiID: s.id}
 }
 
 func (s *screenTouch) IsJustTouched() bool {
@@ -97,11 +117,9 @@ func (s *screenTouch) IsJustReleased() bool {
 }
 
 func (s *screenTouch) Position() *mathutil.Vector2D {
-	var x, y int
-	if s.IsJustReleased() {
-		x, y = inpututil.TouchPositionInPreviousTick(s.id)
-	} else {
-		x, y = ebiten.TouchPosition(s.id)
-	}
-	return mathutil.NewVector2D(float64(x), float64(y))
+	return s.pos
+}
+
+func (s *screenTouch) PreviousPosition() *mathutil.Vector2D {
+	return s.prevPos
 }
