@@ -13,9 +13,11 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/text"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 	"github.com/tsujio/game-bullet-hell/touchutil"
 	"github.com/tsujio/game-util/mathutil"
+	"github.com/tsujio/game-util/resourceutil"
 	"github.com/tsujio/go-bulletml"
 )
 
@@ -30,10 +32,11 @@ const (
 	playerHomeX, playerHomeY = screenWidth / 2, screenHeight * 4 / 5
 )
 
-//go:embed resources/*.xml
+//go:embed resources/*.ttf resources/*.xml
 var resources embed.FS
 
 var (
+	fontL, fontM, fontS                                       = resourceutil.ForceLoadFont(resources, "resources/PressStart2P-Regular.ttf", nil)
 	playerImg, playerBulletImg, enemyImg, bulletImg, emptyImg *ebiten.Image
 )
 
@@ -382,19 +385,54 @@ func (g *Game) Update() error {
 	return nil
 }
 
+func (g *Game) drawGameOverText(screen *ebiten.Image) {
+	var gameOverTexts []string
+	if g.enemy.life <= 0 {
+		gameOverTexts = []string{"GAME CLEAR"}
+	} else {
+		gameOverTexts = []string{"GAME OVER"}
+	}
+	for i, s := range gameOverTexts {
+		text.Draw(screen, s, fontL.Face, screenWidth/2-len(s)*int(fontL.FaceOptions.Size)/2, 170+i*int(fontL.FaceOptions.Size*1.8), color.Black)
+	}
+
+	scoreText := []string{"YOUR SCORE IS", fmt.Sprintf("%d!", 100)}
+	for i, s := range scoreText {
+		text.Draw(screen, s, fontM.Face, screenWidth/2-len(s)*int(fontM.FaceOptions.Size)/2, 230+i*int(fontM.FaceOptions.Size*1.8), color.Black)
+	}
+}
+
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.White)
 
-	g.enemy.draw(screen)
+	switch g.mode {
+	case GameModeTitle:
+	case GameModePlaying:
+		g.player.draw(screen)
 
-	g.player.draw(screen)
+		for _, b := range g.bullets {
+			b.draw(screen)
+		}
 
-	for _, b := range g.bullets {
-		b.draw(screen)
-	}
+		g.enemy.draw(screen)
 
-	for _, b := range g.playerBullets {
-		b.draw(screen)
+		for _, b := range g.playerBullets {
+			b.draw(screen)
+		}
+	case GameModeGameOver:
+		g.player.draw(screen)
+
+		for _, b := range g.bullets {
+			b.draw(screen)
+		}
+
+		g.enemy.draw(screen)
+
+		for _, b := range g.playerBullets {
+			b.draw(screen)
+		}
+
+		g.drawGameOverText(screen)
 	}
 
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("%.1ffps", ebiten.ActualFPS()))
