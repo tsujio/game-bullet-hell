@@ -279,7 +279,23 @@ func (g *Game) Update() error {
 		}
 
 		if !g.player.invincible() {
+			playerTopLeftX := math.Min(g.player.pos.X-g.player.r, g.player.prevPos.X-g.player.r)
+			playerTopLeftY := math.Min(g.player.pos.Y-g.player.r, g.player.prevPos.Y-g.player.r)
+			playerBottomRightX := math.Max(g.player.pos.X+g.player.r, g.player.prevPos.X+g.player.r)
+			playerBottomRightY := math.Max(g.player.pos.Y+g.player.r, g.player.prevPos.Y+g.player.r)
 			for _, b := range g.bullets {
+				bulletTopLeftX := math.Min(b.pos.X-b.r, b.prevPos.X-b.r)
+				bulletTopLeftY := math.Min(b.pos.Y-b.r, b.prevPos.Y-b.r)
+				bulletBottomRightX := math.Max(b.pos.X+b.r, b.prevPos.X+b.r)
+				bulletBottomRightY := math.Max(b.pos.Y+b.r, b.prevPos.Y+b.r)
+
+				if bulletTopLeftX > playerBottomRightX ||
+					bulletTopLeftY > playerBottomRightY ||
+					bulletBottomRightX < playerTopLeftX ||
+					bulletBottomRightY < playerTopLeftY {
+					continue
+				}
+
 				if mathutil.CapsulesCollide(
 					g.player.pos, g.player.prevPos.Sub(g.player.pos), g.player.r,
 					b.pos, b.prevPos.Sub(b.pos), b.r,
@@ -381,7 +397,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		b.draw(screen)
 	}
 
-	ebitenutil.DebugPrint(screen, fmt.Sprintf("%.1f", ebiten.ActualFPS()))
+	ebitenutil.DebugPrint(screen, fmt.Sprintf("%.1ffps", ebiten.ActualFPS()))
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
