@@ -30,6 +30,7 @@ const (
 	enemyR                   = 4
 	bulletR                  = 3
 	playerHomeX, playerHomeY = screenWidth / 2, screenHeight * 4 / 5
+	enemyHomeX, enemyHomeY   = screenWidth / 2, screenHeight * 1 / 5
 )
 
 //go:embed resources/*.ttf resources/*.xml
@@ -38,6 +39,7 @@ var resources embed.FS
 var (
 	fontL, fontM, fontS                                       = resourceutil.ForceLoadFont(resources, "resources/PressStart2P-Regular.ttf", nil)
 	playerImg, playerBulletImg, enemyImg, bulletImg, emptyImg *ebiten.Image
+	bulletMLs                                                 []*bulletml.BulletML
 )
 
 func init() {
@@ -56,22 +58,46 @@ func init() {
 	img := ebiten.NewImage(3, 3)
 	img.Fill(color.White)
 	emptyImg = img.SubImage(image.Rect(1, 1, 2, 2)).(*ebiten.Image)
+
+	for _, p := range []string{"barrage-1.xml", "barrage-1.xml"} {
+		f, err := resources.Open("resources/" + p)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+
+		bml, err := bulletml.Load(f)
+		if err != nil {
+			panic(err)
+		}
+
+		bulletMLs = append(bulletMLs, bml)
+	}
 }
 
 type Enemy struct {
-	pos, prevPos *mathutil.Vector2D
-	r            float64
-	hit          bool
-	life         float64
-	runner       bulletml.Runner
-	game         *Game
+	ticks               int
+	pos, prevPos        *mathutil.Vector2D
+	r                   float64
+	hit                 bool
+	life                float64
+	bulletMLIndex       int
+	startNextBulletMLAt int
+	runner              bulletml.BulletRunner
+	game                *Game
+}
+
+func (e *Enemy) defeated() bool {
+	return e.bulletMLIndex >= len(bulletMLs)
 }
 
 func (e *Enemy) update() error {
 	e.prevPos = e.pos.Clone()
 
 	if e.hit {
-		e.life -= 0.5
+		if e.runner != nil {
+			e.life -= 0.5
+		}
 		e.hit = false
 	}
 
@@ -79,7 +105,31 @@ func (e *Enemy) update() error {
 		if err := e.runner.Update(); err != nil {
 			return err
 		}
+		e.pos.X, e.pos.Y = e.runner.Position()
+	} else {
+		home := mathutil.NewVector2D(enemyHomeX, enemyHomeY)
+		e.pos = e.pos.Add(home.Sub(e.pos).Div(60))
 	}
+
+	if e.life <= 0 {
+		e.runner = nil
+		if e.ticks == 0 {
+			e.bulletMLIndex = 0
+		} else {
+			e.bulletMLIndex++
+		}
+
+		if e.bulletMLIndex < len(bulletMLs) {
+			e.startNextBulletMLAt = e.ticks + 180
+			e.life = 100
+		}
+	}
+
+	if e.ticks == e.startNextBulletMLAt {
+		e.game.setBulletML(e.bulletMLIndex)
+	}
+
+	e.ticks++
 
 	return nil
 }
@@ -161,8 +211,6 @@ func (p *Player) invincible() bool {
 }
 
 func (p *Player) update() error {
-	p.ticks++
-
 	p.prevPos = p.pos.Clone()
 
 	if p.hit {
@@ -206,6 +254,8 @@ func (p *Player) update() error {
 			}
 		}
 	}
+
+	p.ticks++
 
 	return nil
 }
@@ -277,10 +327,6 @@ func (g *Game) Update() error {
 		g.setNextMode(GameModePlaying)
 
 	case GameModePlaying:
-		if g.enemy.runner == nil {
-			g.setBulletML("resources/barrage-1.xml")
-		}
-
 		if !g.player.invincible() {
 			playerTopLeftX := math.Min(g.player.pos.X-g.player.r, g.player.prevPos.X-g.player.r)
 			playerTopLeftY := math.Min(g.player.pos.Y-g.player.r, g.player.prevPos.Y-g.player.r)
@@ -364,7 +410,7 @@ func (g *Game) Update() error {
 		}
 		g.playerBullets = _playerBullets
 
-		if g.enemy.life <= 0 {
+		if g.enemy.defeated() {
 			g.setNextMode(GameModeGameOver)
 		}
 
@@ -442,29 +488,26 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return screenWidth, screenHeight
 }
 
-func (g *Game) setBulletML(path string) error {
-	f, err := resources.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+func (g *Game) setBulletML(index int) error {
+	bml := bulletMLs[index]
 
-	bml, err := bulletml.Load(f)
-	if err != nil {
-		return err
-	}
-
+	enemyRunner := true
 	opts := &bulletml.NewRunnerOptions{
 		OnBulletFired: func(br bulletml.BulletRunner, fc *bulletml.FireContext) {
-			x, y := br.Position()
-			b := &Bullet{
-				pos:     mathutil.NewVector2D(x, y),
-				prevPos: mathutil.NewVector2D(x, y),
-				r:       bulletR,
-				runner:  br,
-				game:    g,
+			if enemyRunner {
+				g.enemy.runner = br
+				g.enemy.pos.X, g.enemy.pos.Y = br.Position()
+			} else {
+				x, y := br.Position()
+				b := &Bullet{
+					pos:     mathutil.NewVector2D(x, y),
+					prevPos: mathutil.NewVector2D(x, y),
+					r:       bulletR,
+					runner:  br,
+					game:    g,
+				}
+				g.bullets = append(g.bullets, b)
 			}
-			g.bullets = append(g.bullets, b)
 		},
 		CurrentShootPosition: func() (float64, float64) {
 			return g.enemy.pos.X, g.enemy.pos.Y
@@ -479,7 +522,11 @@ func (g *Game) setBulletML(path string) error {
 		return err
 	}
 
-	g.enemy.runner = runner
+	if err := runner.Update(); err != nil {
+		return err
+	}
+
+	enemyRunner = false
 
 	return nil
 }
@@ -500,15 +547,11 @@ func (g *Game) initialize() {
 		game:    g,
 	}
 
-	enemyPos := mathutil.NewVector2D(
-		screenWidth/2,
-		screenHeight*1/5,
-	)
+	enemyPos := mathutil.NewVector2D(enemyHomeX, enemyHomeY)
 	g.enemy = &Enemy{
 		pos:     enemyPos,
 		prevPos: enemyPos,
 		r:       enemyR,
-		life:    100,
 		game:    g,
 	}
 
