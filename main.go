@@ -401,7 +401,7 @@ func (g *Game) Update() error {
 		for _, b := range g.bullets {
 			if !b.hit &&
 				!b.runner.Vanished() &&
-				b.prevPos.X-b.r > 0 && b.prevPos.X+b.r < screenWidth && b.prevPos.Y-b.r > 0 && b.prevPos.Y+b.r < screenHeight {
+				b.prevPos.X+b.r > 0 && b.prevPos.X-b.r < screenWidth && b.prevPos.Y+b.r > 0 && b.prevPos.Y-b.r < screenHeight {
 				_bullets = append(_bullets, b)
 			}
 		}
@@ -410,7 +410,7 @@ func (g *Game) Update() error {
 		_playerBullets := g.playerBullets[:0]
 		for _, b := range g.playerBullets {
 			if !b.hit &&
-				b.prevPos.X-b.r > 0 && b.prevPos.X+b.r < screenWidth && b.prevPos.Y-b.r > 0 && b.prevPos.Y+b.r < screenHeight {
+				b.prevPos.X+b.r > 0 && b.prevPos.X-b.r < screenWidth && b.prevPos.Y+b.r > 0 && b.prevPos.Y-b.r < screenHeight {
 				_playerBullets = append(_playerBullets, b)
 			}
 		}
