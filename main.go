@@ -45,6 +45,7 @@ var (
 	enemyImg,
 	bulletImg *ebiten.Image
 	playerLifeImgs []*ebiten.Image
+	flashImg       *ebiten.Image
 	bulletMLs      []*bulletml.BulletML
 )
 
@@ -75,6 +76,9 @@ func init() {
 		}
 		playerLifeImgs = append(playerLifeImgs, img)
 	}
+
+	flashImg = ebiten.NewImage(500, 500)
+	vector.DrawFilledCircle(flashImg, 250, 250, 250, color.White, true)
 
 	for _, p := range []string{"barrage-1.xml", "barrage-1.xml"} {
 		f, err := resources.Open("resources/" + p)
@@ -418,13 +422,14 @@ func (e *FlashEffect) draw(dst *ebiten.Image) {
 	rad := e.r * float64(e.ticks) / float64(e.until)
 	r, g, b, a := e.color.RGBA()
 	a = uint32(float64(a) * (1 - float64(e.ticks)/float64(e.until)))
-	c := color.RGBA{
-		uint8(0xff * r / 0xffff),
-		uint8(0xff * g / 0xffff),
-		uint8(0xff * b / 0xffff),
-		uint8(0xff * a / 0xffff),
-	}
-	vector.DrawFilledCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(rad), c, true)
+
+	opts := &ebiten.DrawImageOptions{}
+	w, h := flashImg.Size()
+	opts.GeoM.Translate(-float64(w)/2, -float64(h)/2)
+	opts.GeoM.Scale(rad*2/float64(w), rad*2/float64(h))
+	opts.GeoM.Translate(e.pos.X, e.pos.Y)
+	opts.ColorScale.Scale(float32(r)/0xffff, float32(g)/0xffff, float32(b)/0xffff, float32(a)/0xffff)
+	dst.DrawImage(flashImg, opts)
 }
 
 type EnemyFragment struct {
