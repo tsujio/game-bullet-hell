@@ -27,7 +27,7 @@ const (
 	screenHeight             = 480
 	playerR                  = 4
 	playerBulletR            = 3
-	enemyR                   = 4
+	enemyR                   = 20
 	bulletR                  = 3
 	playerHomeX, playerHomeY = screenWidth / 2, screenHeight * 4 / 5
 	enemyHomeX, enemyHomeY   = screenWidth / 2, screenHeight * 1 / 5
@@ -38,26 +38,50 @@ var resources embed.FS
 
 var (
 	fontL, fontM, fontS                                       = resourceutil.ForceLoadFont(resources, "resources/PressStart2P-Regular.ttf", nil)
-	playerImg, playerBulletImg, enemyImg, bulletImg, emptyImg *ebiten.Image
+	emptyImg, playerImg, playerBulletImg, enemyImg, bulletImg *ebiten.Image
 	bulletMLs                                                 []*bulletml.BulletML
 )
 
 func init() {
-	playerImg = ebiten.NewImage(playerR*2, playerR*2)
-	vector.DrawFilledCircle(playerImg, playerR, playerR, playerR, color.Black, true)
+	img := ebiten.NewImage(3, 3)
+	img.Fill(color.White)
+	emptyImg = img.SubImage(image.Rect(1, 1, 2, 2)).(*ebiten.Image)
+
+	playerImg = ebiten.NewImage(60, 60)
+	playerImgW, _ := playerImg.Size()
+	var path vector.Path
+	for i, n := 0, 3; i < n; i++ {
+		x := float32(float64(playerImgW)/2 + float64(playerImgW)/2*math.Cos(math.Pi*2*float64(i)/float64(n)))
+		y := float32(float64(playerImgW)/2 + float64(playerImgW)/2*math.Sin(math.Pi*2*float64(i)/float64(n)))
+		if i == 0 {
+			path.MoveTo(x, y)
+		} else {
+			path.LineTo(x, y)
+		}
+	}
+	path.Close()
+	vs, is := path.AppendVerticesAndIndicesForStroke(nil, nil, &vector.StrokeOptions{
+		Width: 2,
+	})
+	for i := range vs {
+		vs[i].SrcX = 1
+		vs[i].SrcY = 1
+		vs[i].ColorR = 0
+		vs[i].ColorG = 0
+		vs[i].ColorB = 0
+		vs[i].ColorA = 0.3
+	}
+	playerImg.DrawTriangles(vs, is, emptyImg, nil)
+	vector.DrawFilledCircle(playerImg, float32(playerImgW)/2, float32(playerImgW)/2, playerR, color.RGBA{0xff, 0, 0, 0xff}, true)
 
 	playerBulletImg = ebiten.NewImage(playerBulletR*2, playerBulletR*2)
 	vector.DrawFilledCircle(playerBulletImg, playerBulletR, playerBulletR, playerBulletR, color.Black, true)
 
 	enemyImg = ebiten.NewImage(enemyR*2, enemyR*2)
-	vector.DrawFilledCircle(enemyImg, enemyR, enemyR, enemyR, color.Black, true)
+	vector.DrawFilledRect(enemyImg, 0, 0, enemyR*2, enemyR*2, color.Black, true)
 
 	bulletImg = ebiten.NewImage(bulletR*2, bulletR*2)
 	vector.DrawFilledCircle(bulletImg, bulletR, bulletR, bulletR, color.Black, true)
-
-	img := ebiten.NewImage(3, 3)
-	img.Fill(color.White)
-	emptyImg = img.SubImage(image.Rect(1, 1, 2, 2)).(*ebiten.Image)
 
 	for _, p := range []string{"barrage-1.xml", "barrage-1.xml"} {
 		f, err := resources.Open("resources/" + p)
@@ -134,7 +158,9 @@ func (e *Enemy) update() error {
 func (e *Enemy) draw(dst *ebiten.Image) {
 	opts := &ebiten.DrawImageOptions{}
 	w, h := enemyImg.Size()
-	opts.GeoM.Translate(e.pos.X-float64(w)/2, e.pos.Y-float64(h)/2)
+	opts.GeoM.Translate(-float64(w)/2, -float64(h)/2)
+	opts.GeoM.Rotate(float64(e.ticks) * math.Pi / 30)
+	opts.GeoM.Translate(e.pos.X, e.pos.Y)
 	dst.DrawImage(enemyImg, opts)
 
 	e.drawLife(dst)
@@ -142,7 +168,7 @@ func (e *Enemy) draw(dst *ebiten.Image) {
 
 func (e *Enemy) drawLife(dst *ebiten.Image) {
 	var path vector.Path
-	const r = 40.0
+	const r = 60.0
 
 	path.MoveTo(float32(e.pos.X), float32(e.pos.Y-r))
 	path.Arc(float32(e.pos.X), float32(e.pos.Y), float32(r), -math.Pi/2, float32(-math.Pi/2-2*math.Pi*e.life/100), vector.CounterClockwise)
@@ -260,7 +286,9 @@ func (p *Player) update() error {
 func (p *Player) draw(dst *ebiten.Image) {
 	opts := &ebiten.DrawImageOptions{}
 	w, h := playerImg.Size()
-	opts.GeoM.Translate(p.pos.X-float64(w)/2, p.pos.Y-float64(h)/2)
+	opts.GeoM.Translate(-float64(w)/2, -float64(h)/2)
+	opts.GeoM.Rotate(float64(p.ticks) * math.Pi / 30)
+	opts.GeoM.Translate(p.pos.X, p.pos.Y)
 
 	if p.invincible() && p.ticks/10%2 == 0 {
 		opts.ColorScale.ScaleAlpha(0.2)
@@ -288,6 +316,7 @@ func (b *PlayerBullet) draw(dst *ebiten.Image) {
 		opts := &ebiten.DrawImageOptions{}
 		w, h := playerBulletImg.Size()
 		opts.GeoM.Translate(b.pos.X-float64(w)/2, b.pos.Y-float64(h)/2)
+		opts.ColorScale.ScaleAlpha(0.3)
 		dst.DrawImage(playerBulletImg, opts)
 	}
 }
@@ -500,6 +529,10 @@ func (g *Game) Update() error {
 		}
 
 	case GameModeGameOver:
+		if err := g.player.update(); err != nil {
+			return err
+		}
+
 		if g.ticksFromModeStart > 60 && len(g.touches) > 0 && g.touches[0].IsJustTouched() {
 			g.initialize()
 		}
@@ -598,6 +631,7 @@ func (g *Game) setBulletML(index int) error {
 			if enemyRunner {
 				g.enemy.runner = br
 				g.enemy.pos.X, g.enemy.pos.Y = br.Position()
+				enemyRunner = false
 			} else {
 				x, y := br.Position()
 				b := &Bullet{
@@ -626,8 +660,6 @@ func (g *Game) setBulletML(index int) error {
 	if err := runner.Update(); err != nil {
 		return err
 	}
-
-	enemyRunner = false
 
 	return nil
 }
