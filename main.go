@@ -129,7 +129,7 @@ func (e *Enemy) update() error {
 
 	if e.hit {
 		if e.state == EnemyStateRunning {
-			e.life -= 0.5 * 20
+			e.life -= 0.5
 		}
 		e.hit = false
 	}
