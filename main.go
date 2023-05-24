@@ -145,6 +145,16 @@ func (e *Enemy) update() error {
 	}
 
 	if e.life <= 0 && e.state == EnemyStateRunning {
+		for _, b := range e.game.bullets {
+			f := &FlashEffect{
+				pos:   b.pos.Clone(),
+				r:     10,
+				color: color.Gray{0x70},
+				until: 25,
+			}
+			e.game.flashEffects = append(e.game.flashEffects, f)
+		}
+
 		e.runner = nil
 		e.game.bullets = nil
 		e.bulletMLIndex++
@@ -163,7 +173,7 @@ func (e *Enemy) update() error {
 		f := &FlashEffect{
 			pos:   e.pos.Clone().Add(mathutil.NewVector2D(50*e.game.random.Float64()-25, 50*e.game.random.Float64()-25)),
 			r:     60,
-			color: color.Gray{0x70},
+			color: color.Black,
 			until: 30,
 		}
 		e.game.flashEffects = append(e.game.flashEffects, f)
@@ -385,52 +395,6 @@ func (b *PlayerBullet) draw(dst *ebiten.Image) {
 	}
 }
 
-type BulletHitEffect struct {
-	ticks    int
-	pos      *mathutil.Vector2D
-	bullet   *Bullet
-	finished bool
-}
-
-func (e *BulletHitEffect) update() error {
-	e.ticks++
-
-	if e.ticks >= 60 {
-		e.finished = true
-	}
-
-	return nil
-}
-
-func (e *BulletHitEffect) draw(dst *ebiten.Image) {
-	r := 60 * e.ticks / 60
-	c := color.RGBA{0, 0, 0, uint8(0xff * (1 - float64(e.ticks)/60))}
-	vector.StrokeCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(r), 2, c, true)
-}
-
-type PlayerHitEffect struct {
-	ticks    int
-	pos      *mathutil.Vector2D
-	player   *Player
-	finished bool
-}
-
-func (e *PlayerHitEffect) update() error {
-	e.ticks++
-
-	if e.ticks >= 60 {
-		e.finished = true
-	}
-
-	return nil
-}
-
-func (e *PlayerHitEffect) draw(dst *ebiten.Image) {
-	r := 60 * e.ticks / 60
-	c := color.RGBA{0xff, 0, 0, uint8(0xff * (1 - float64(e.ticks)/60))}
-	vector.StrokeCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(r), 2, c, true)
-}
-
 type FlashEffect struct {
 	ticks    int
 	pos      *mathutil.Vector2D
@@ -453,7 +417,13 @@ func (e *FlashEffect) update() error {
 func (e *FlashEffect) draw(dst *ebiten.Image) {
 	rad := e.r * float64(e.ticks) / float64(e.until)
 	r, g, b, a := e.color.RGBA()
-	c := color.RGBA{uint8(r), uint8(g), uint8(b), uint8(float64(a) * (1 - float64(e.ticks)/float64(e.until)))}
+	a = uint32(float64(a) * (1 - float64(e.ticks)/float64(e.until)))
+	c := color.RGBA{
+		uint8(0xff * r / 0xffff),
+		uint8(0xff * g / 0xffff),
+		uint8(0xff * b / 0xffff),
+		uint8(0xff * a / 0xffff),
+	}
 	vector.DrawFilledCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(rad), c, true)
 }
 
@@ -496,8 +466,6 @@ type Game struct {
 	enemy              *Enemy
 	bullets            []*Bullet
 	playerBullets      []*PlayerBullet
-	bulletHitEffects   []*BulletHitEffect
-	playerHitEffects   []*PlayerHitEffect
 	flashEffects       []*FlashEffect
 	enemyFragments     []*EnemyFragment
 }
@@ -546,19 +514,25 @@ func (g *Game) Update() error {
 					for _, b := range g.bullets {
 						if b.pos.Sub(mathutil.NewVector2D(playerHomeX, playerHomeY)).NormSq() > 300*300 {
 							_bullets = append(_bullets, b)
+						} else {
+							f := &FlashEffect{
+								pos:   b.pos.Clone(),
+								r:     10,
+								color: color.Gray{0x70},
+								until: 25,
+							}
+							g.flashEffects = append(g.flashEffects, f)
 						}
 					}
 					g.bullets = _bullets
 
-					g.bulletHitEffects = append(g.bulletHitEffects, &BulletHitEffect{
-						pos:    b.pos.Clone(),
-						bullet: b,
-					})
-
-					g.playerHitEffects = append(g.playerHitEffects, &PlayerHitEffect{
-						pos:    g.player.pos.Clone(),
-						player: g.player,
-					})
+					f := &FlashEffect{
+						pos:   g.player.pos.Clone(),
+						r:     40,
+						color: color.RGBA{0xff, 0, 0, 0xff},
+						until: 25,
+					}
+					g.flashEffects = append(g.flashEffects, f)
 
 					break
 				}
@@ -595,18 +569,6 @@ func (g *Game) Update() error {
 			}
 		}
 
-		for _, e := range g.bulletHitEffects {
-			if err := e.update(); err != nil {
-				return err
-			}
-		}
-
-		for _, e := range g.playerHitEffects {
-			if err := e.update(); err != nil {
-				return err
-			}
-		}
-
 		for _, e := range g.flashEffects {
 			if err := e.update(); err != nil {
 				return err
@@ -637,22 +599,6 @@ func (g *Game) Update() error {
 			}
 		}
 		g.playerBullets = _playerBullets
-
-		_bulletHitEffects := g.bulletHitEffects[:0]
-		for _, e := range g.bulletHitEffects {
-			if !e.finished {
-				_bulletHitEffects = append(_bulletHitEffects, e)
-			}
-		}
-		g.bulletHitEffects = _bulletHitEffects
-
-		_playerHitEffects := g.playerHitEffects[:0]
-		for _, e := range g.playerHitEffects {
-			if !e.finished {
-				_playerHitEffects = append(_playerHitEffects, e)
-			}
-		}
-		g.playerHitEffects = _playerHitEffects
 
 		_flashEffects := g.flashEffects[:0]
 		for _, e := range g.flashEffects {
@@ -685,18 +631,6 @@ func (g *Game) Update() error {
 			}
 		}
 
-		for _, e := range g.bulletHitEffects {
-			if err := e.update(); err != nil {
-				return err
-			}
-		}
-
-		for _, e := range g.playerHitEffects {
-			if err := e.update(); err != nil {
-				return err
-			}
-		}
-
 		for _, e := range g.flashEffects {
 			if err := e.update(); err != nil {
 				return err
@@ -717,22 +651,6 @@ func (g *Game) Update() error {
 			}
 		}
 		g.playerBullets = _playerBullets
-
-		_bulletHitEffects := g.bulletHitEffects[:0]
-		for _, e := range g.bulletHitEffects {
-			if !e.finished {
-				_bulletHitEffects = append(_bulletHitEffects, e)
-			}
-		}
-		g.bulletHitEffects = _bulletHitEffects
-
-		_playerHitEffects := g.playerHitEffects[:0]
-		for _, e := range g.playerHitEffects {
-			if !e.finished {
-				_playerHitEffects = append(_playerHitEffects, e)
-			}
-		}
-		g.playerHitEffects = _playerHitEffects
 
 		_flashEffects := g.flashEffects[:0]
 		for _, e := range g.flashEffects {
@@ -801,14 +719,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			b.draw(screen)
 		}
 
-		for _, e := range g.bulletHitEffects {
-			e.draw(screen)
-		}
-
-		for _, e := range g.playerHitEffects {
-			e.draw(screen)
-		}
-
 		for _, e := range g.flashEffects {
 			e.draw(screen)
 		}
@@ -827,14 +737,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 		for _, b := range g.playerBullets {
 			b.draw(screen)
-		}
-
-		for _, e := range g.bulletHitEffects {
-			e.draw(screen)
-		}
-
-		for _, e := range g.playerHitEffects {
-			e.draw(screen)
 		}
 
 		for _, e := range g.flashEffects {
@@ -927,8 +829,6 @@ func (g *Game) initialize() {
 
 	g.bullets = nil
 	g.playerBullets = nil
-	g.bulletHitEffects = nil
-	g.playerHitEffects = nil
 	g.flashEffects = nil
 	g.enemyFragments = nil
 
