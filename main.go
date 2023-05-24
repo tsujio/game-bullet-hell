@@ -66,32 +66,13 @@ func init() {
 	vector.DrawFilledCircle(bulletImg, bulletR, bulletR, bulletR, color.Black, true)
 
 	for life := 1; life <= playerInitialLife; life++ {
-		img = ebiten.NewImage(40, 40)
+		img = ebiten.NewImage(70, 70)
 		w, _ := img.Size()
-		var path vector.Path
-		for i := 0; i < life; i++ {
-			n := math.Max(float64(life), 3)
-			x := float32(float64(w)/2 + float64(w)/2*math.Cos(math.Pi*2*float64(i)/n))
-			y := float32(float64(w)/2 + float64(w)/2*math.Sin(math.Pi*2*float64(i)/n))
-			if i == 0 {
-				path.MoveTo(x, y)
-			} else {
-				path.LineTo(x, y)
-			}
+		for i, n := 0, life-1; i < n; i++ {
+			x := float32(float64(w)/2 + (float64(w)/2-2)*math.Cos(math.Pi*2*float64(i)/float64(n)))
+			y := float32(float64(w)/2 + (float64(w)/2-2)*math.Sin(math.Pi*2*float64(i)/float64(n)))
+			vector.DrawFilledCircle(img, x, y, 2, color.RGBA{0, 0, 0, 0x70}, true)
 		}
-		path.Close()
-		vs, is := path.AppendVerticesAndIndicesForStroke(nil, nil, &vector.StrokeOptions{
-			Width: 2,
-		})
-		for i := range vs {
-			vs[i].SrcX = 1
-			vs[i].SrcY = 1
-			vs[i].ColorR = 0
-			vs[i].ColorG = 0
-			vs[i].ColorB = 0
-			vs[i].ColorA = 0.3
-		}
-		img.DrawTriangles(vs, is, emptyImg, nil)
 		playerLifeImgs = append(playerLifeImgs, img)
 	}
 
@@ -278,7 +259,7 @@ func (p *Player) update() error {
 		}
 	}
 
-	if !p.invincible() && p.game.mode == GameModePlaying {
+	if !p.invincible() {
 		if p.ticks%5 == 0 {
 			for i := 0; i < 2; i++ {
 				pos := p.pos.Clone()
@@ -371,7 +352,9 @@ func (e *BulletHitEffect) update() error {
 }
 
 func (e *BulletHitEffect) draw(dst *ebiten.Image) {
-	vector.DrawFilledCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(e.bullet.r), color.RGBA{0xff, 0, 0, 0xff}, true)
+	r := 60 * e.ticks / 60
+	c := color.RGBA{0, 0, 0, uint8(0xff * (1 - float64(e.ticks)/60))}
+	vector.StrokeCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(r), 2, c, true)
 }
 
 type PlayerHitEffect struct {
@@ -392,7 +375,9 @@ func (e *PlayerHitEffect) update() error {
 }
 
 func (e *PlayerHitEffect) draw(dst *ebiten.Image) {
-	vector.DrawFilledCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(e.player.r), color.RGBA{0xff, 0xff, 0, 0xff}, true)
+	r := 60 * e.ticks / 60
+	c := color.RGBA{0xff, 0, 0, uint8(0xff * (1 - float64(e.ticks)/60))}
+	vector.StrokeCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(r), 2, c, true)
 }
 
 type GameMode int
@@ -564,6 +549,21 @@ func (g *Game) Update() error {
 		if err := g.player.update(); err != nil {
 			return err
 		}
+
+		for i, n := 0, len(g.playerBullets); i < n; i++ {
+			if err := g.playerBullets[i].update(); err != nil {
+				return err
+			}
+		}
+
+		_playerBullets := g.playerBullets[:0]
+		for _, b := range g.playerBullets {
+			if !b.hit &&
+				b.prevPos.X+b.r > 0 && b.prevPos.X-b.r < screenWidth && b.prevPos.Y+b.r > 0 && b.prevPos.Y-b.r < screenHeight {
+				_playerBullets = append(_playerBullets, b)
+			}
+		}
+		g.playerBullets = _playerBullets
 
 		if g.ticksFromModeStart > 60 && len(g.touches) > 0 && g.touches[0].IsJustTouched() {
 			g.initialize()
