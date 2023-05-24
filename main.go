@@ -354,6 +354,14 @@ func (g *Game) Update() error {
 
 					g.touches = nil
 
+					_bullets := g.bullets[:0]
+					for _, b := range g.bullets {
+						if b.pos.Sub(mathutil.NewVector2D(playerHomeX, playerHomeY)).NormSq() > 300*300 {
+							_bullets = append(_bullets, b)
+						}
+					}
+					g.bullets = _bullets
+
 					break
 				}
 			}
@@ -366,8 +374,6 @@ func (g *Game) Update() error {
 			) {
 				b.hit = true
 				g.enemy.hit = true
-
-				g.enemy.life -= 0.5
 			}
 		}
 
