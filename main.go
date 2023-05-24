@@ -92,10 +92,29 @@ func init() {
 	}
 }
 
+func isIn[T comparable](v T, values ...T) bool {
+	for _, val := range values {
+		if v == val {
+			return true
+		}
+	}
+	return false
+}
+
+type EnemyState int
+
+const (
+	EnemyStateWaiting = iota
+	EnemyStateRunning
+	EnemyStateFlashing
+	EnemyStateExploded
+)
+
 type Enemy struct {
 	ticks               int
 	pos, prevPos        *mathutil.Vector2D
 	r                   float64
+	state               EnemyState
 	hit                 bool
 	life                float64
 	bulletMLIndex       int
@@ -105,44 +124,42 @@ type Enemy struct {
 	game                *Game
 }
 
-func (e *Enemy) defeated() bool {
-	return e.explodeAt > 0 && e.ticks > e.explodeAt
-}
-
 func (e *Enemy) update() error {
 	e.prevPos = e.pos.Clone()
 
 	if e.hit {
-		if e.runner != nil {
+		if e.state == EnemyStateRunning {
 			e.life -= 0.5 * 20
 		}
 		e.hit = false
 	}
 
-	if e.runner != nil {
+	if e.state == EnemyStateRunning {
 		if err := e.runner.Update(); err != nil {
 			return err
 		}
 		e.pos.X, e.pos.Y = e.runner.Position()
-	} else {
+	} else if e.state == EnemyStateWaiting {
 		home := mathutil.NewVector2D(enemyHomeX, enemyHomeY)
 		e.pos = e.pos.Add(home.Sub(e.pos).Div(60))
 	}
 
-	if e.life <= 0 {
+	if e.life <= 0 && e.state == EnemyStateRunning {
 		e.runner = nil
 		e.game.bullets = nil
+		e.bulletMLIndex++
 
-		if e.bulletMLIndex < len(bulletMLs)-1 {
-			e.bulletMLIndex++
+		if e.bulletMLIndex < len(bulletMLs) {
 			e.startNextBulletMLAt = e.ticks + 180
 			e.life = 100
-		} else if e.explodeAt < 0 {
+			e.state = EnemyStateWaiting
+		} else {
 			e.explodeAt = e.ticks + 120
+			e.state = EnemyStateFlashing
 		}
 	}
 
-	if e.ticks < e.explodeAt && e.ticks%15 == 0 {
+	if e.ticks < e.explodeAt && e.ticks%15 == 0 && e.state == EnemyStateFlashing {
 		f := &FlashEffect{
 			pos:   e.pos.Clone().Add(mathutil.NewVector2D(50*e.game.random.Float64()-25, 50*e.game.random.Float64()-25)),
 			r:     60,
@@ -152,7 +169,7 @@ func (e *Enemy) update() error {
 		e.game.flashEffects = append(e.game.flashEffects, f)
 	}
 
-	if e.ticks == e.explodeAt {
+	if e.ticks == e.explodeAt && e.state == EnemyStateFlashing {
 		for i := 0; i < 50; i++ {
 			s := 1 + 5*e.game.random.Float64()
 			d := math.Pi * 2 * e.game.random.Float64()
@@ -162,10 +179,13 @@ func (e *Enemy) update() error {
 			}
 			e.game.enemyFragments = append(e.game.enemyFragments, f)
 		}
+
+		e.state = EnemyStateExploded
 	}
 
-	if e.ticks == e.startNextBulletMLAt {
+	if e.ticks == e.startNextBulletMLAt && e.state == EnemyStateWaiting {
 		e.game.setBulletML(e.bulletMLIndex)
+		e.state = EnemyStateRunning
 	}
 
 	e.ticks++
@@ -174,7 +194,7 @@ func (e *Enemy) update() error {
 }
 
 func (e *Enemy) draw(dst *ebiten.Image) {
-	if !e.defeated() {
+	if isIn(e.state, EnemyStateWaiting, EnemyStateRunning, EnemyStateFlashing) {
 		opts := &ebiten.DrawImageOptions{}
 		w, h := enemyImg.Size()
 		opts.GeoM.Translate(-float64(w)/2, -float64(h)/2)
@@ -650,7 +670,7 @@ func (g *Game) Update() error {
 		}
 		g.enemyFragments = _enemyFragments
 
-		if g.player.life <= 0 || g.enemy.defeated() {
+		if g.player.life <= 0 || g.enemy.state == EnemyStateExploded {
 			g.setNextMode(GameModeGameOver)
 		}
 
@@ -730,7 +750,7 @@ func (g *Game) Update() error {
 		}
 		g.enemyFragments = _enemyFragments
 
-		if g.ticksFromModeStart > 300 && len(g.touches) > 0 && g.touches[0].IsJustTouched() {
+		if g.ticksFromModeStart > 180 && len(g.touches) > 0 && g.touches[0].IsJustTouched() {
 			g.initialize()
 		}
 	}
@@ -748,7 +768,7 @@ func (g *Game) Update() error {
 
 func (g *Game) drawGameOverText(screen *ebiten.Image) {
 	var gameOverTexts []string
-	if g.enemy.life <= 0 {
+	if g.enemy.state == EnemyStateExploded {
 		gameOverTexts = []string{"GAME CLEAR"}
 	} else {
 		gameOverTexts = []string{"GAME OVER"}
@@ -899,9 +919,9 @@ func (g *Game) initialize() {
 		pos:                 enemyPos,
 		prevPos:             enemyPos,
 		r:                   enemyR,
-		bulletMLIndex:       -1,
-		startNextBulletMLAt: -1,
-		explodeAt:           -1,
+		state:               EnemyStateWaiting,
+		life:                100,
+		startNextBulletMLAt: 180,
 		game:                g,
 	}
 
