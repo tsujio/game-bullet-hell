@@ -113,11 +113,8 @@ func (e *Enemy) update() error {
 
 	if e.life <= 0 {
 		e.runner = nil
-		if e.ticks == 0 {
-			e.bulletMLIndex = 0
-		} else {
-			e.bulletMLIndex++
-		}
+		e.bulletMLIndex++
+		e.game.bullets = nil
 
 		if e.bulletMLIndex < len(bulletMLs) {
 			e.startNextBulletMLAt = e.ticks + 180
@@ -295,6 +292,48 @@ func (b *PlayerBullet) draw(dst *ebiten.Image) {
 	}
 }
 
+type BulletHitEffect struct {
+	ticks    int
+	pos      *mathutil.Vector2D
+	bullet   *Bullet
+	finished bool
+}
+
+func (e *BulletHitEffect) update() error {
+	if e.ticks >= 60 {
+		e.finished = true
+	}
+
+	e.ticks++
+
+	return nil
+}
+
+func (e *BulletHitEffect) draw(dst *ebiten.Image) {
+	vector.DrawFilledCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(e.bullet.r), color.RGBA{0xff, 0, 0, 0xff}, true)
+}
+
+type PlayerHitEffect struct {
+	ticks    int
+	pos      *mathutil.Vector2D
+	player   *Player
+	finished bool
+}
+
+func (e *PlayerHitEffect) update() error {
+	if e.ticks >= 60 {
+		e.finished = true
+	}
+
+	e.ticks++
+
+	return nil
+}
+
+func (e *PlayerHitEffect) draw(dst *ebiten.Image) {
+	vector.DrawFilledCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(e.player.r), color.RGBA{0xff, 0xff, 0, 0xff}, true)
+}
+
 type GameMode int
 
 const (
@@ -312,6 +351,8 @@ type Game struct {
 	enemy              *Enemy
 	bullets            []*Bullet
 	playerBullets      []*PlayerBullet
+	bulletHitEffects   []*BulletHitEffect
+	playerHitEffects   []*PlayerHitEffect
 }
 
 func (g *Game) Update() error {
@@ -362,6 +403,16 @@ func (g *Game) Update() error {
 					}
 					g.bullets = _bullets
 
+					g.bulletHitEffects = append(g.bulletHitEffects, &BulletHitEffect{
+						pos:    b.pos.Clone(),
+						bullet: b,
+					})
+
+					g.playerHitEffects = append(g.playerHitEffects, &PlayerHitEffect{
+						pos:    g.player.pos.Clone(),
+						player: g.player,
+					})
+
 					break
 				}
 			}
@@ -397,6 +448,18 @@ func (g *Game) Update() error {
 			}
 		}
 
+		for _, e := range g.bulletHitEffects {
+			if err := e.update(); err != nil {
+				return err
+			}
+		}
+
+		for _, e := range g.playerHitEffects {
+			if err := e.update(); err != nil {
+				return err
+			}
+		}
+
 		_bullets := g.bullets[:0]
 		for _, b := range g.bullets {
 			if !b.hit &&
@@ -415,6 +478,22 @@ func (g *Game) Update() error {
 			}
 		}
 		g.playerBullets = _playerBullets
+
+		_bulletHitEffects := g.bulletHitEffects[:0]
+		for _, e := range g.bulletHitEffects {
+			if !e.finished {
+				_bulletHitEffects = append(_bulletHitEffects, e)
+			}
+		}
+		g.bulletHitEffects = _bulletHitEffects
+
+		_playerHitEffects := g.playerHitEffects[:0]
+		for _, e := range g.playerHitEffects {
+			if !e.finished {
+				_playerHitEffects = append(_playerHitEffects, e)
+			}
+		}
+		g.playerHitEffects = _playerHitEffects
 
 		if g.enemy.defeated() {
 			g.setNextMode(GameModeGameOver)
@@ -471,6 +550,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		for _, b := range g.playerBullets {
 			b.draw(screen)
 		}
+
+		for _, e := range g.bulletHitEffects {
+			e.draw(screen)
+		}
+
+		for _, e := range g.playerHitEffects {
+			e.draw(screen)
+		}
 	case GameModeGameOver:
 		g.player.draw(screen)
 
@@ -482,6 +569,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 		for _, b := range g.playerBullets {
 			b.draw(screen)
+		}
+
+		for _, e := range g.bulletHitEffects {
+			e.draw(screen)
+		}
+
+		for _, e := range g.playerHitEffects {
+			e.draw(screen)
 		}
 
 		g.drawGameOverText(screen)
@@ -555,14 +650,17 @@ func (g *Game) initialize() {
 
 	enemyPos := mathutil.NewVector2D(enemyHomeX, enemyHomeY)
 	g.enemy = &Enemy{
-		pos:     enemyPos,
-		prevPos: enemyPos,
-		r:       enemyR,
-		game:    g,
+		pos:           enemyPos,
+		prevPos:       enemyPos,
+		r:             enemyR,
+		bulletMLIndex: -1,
+		game:          g,
 	}
 
 	g.bullets = nil
 	g.playerBullets = nil
+	g.bulletHitEffects = nil
+	g.playerHitEffects = nil
 
 	g.setNextMode(GameModeTitle)
 }
