@@ -100,12 +100,13 @@ type Enemy struct {
 	life                float64
 	bulletMLIndex       int
 	startNextBulletMLAt int
+	explodeAt           int
 	runner              bulletml.BulletRunner
 	game                *Game
 }
 
 func (e *Enemy) defeated() bool {
-	return e.bulletMLIndex >= len(bulletMLs)
+	return e.explodeAt > 0 && e.ticks > e.explodeAt
 }
 
 func (e *Enemy) update() error {
@@ -113,7 +114,7 @@ func (e *Enemy) update() error {
 
 	if e.hit {
 		if e.runner != nil {
-			e.life -= 0.5
+			e.life -= 0.5 * 20
 		}
 		e.hit = false
 	}
@@ -130,12 +131,36 @@ func (e *Enemy) update() error {
 
 	if e.life <= 0 {
 		e.runner = nil
-		e.bulletMLIndex++
 		e.game.bullets = nil
 
-		if e.bulletMLIndex < len(bulletMLs) {
+		if e.bulletMLIndex < len(bulletMLs)-1 {
+			e.bulletMLIndex++
 			e.startNextBulletMLAt = e.ticks + 180
 			e.life = 100
+		} else if e.explodeAt < 0 {
+			e.explodeAt = e.ticks + 120
+		}
+	}
+
+	if e.ticks < e.explodeAt && e.ticks%15 == 0 {
+		f := &FlashEffect{
+			pos:   e.pos.Clone().Add(mathutil.NewVector2D(50*e.game.random.Float64()-25, 50*e.game.random.Float64()-25)),
+			r:     60,
+			color: color.Gray{0x70},
+			until: 30,
+		}
+		e.game.flashEffects = append(e.game.flashEffects, f)
+	}
+
+	if e.ticks == e.explodeAt {
+		for i := 0; i < 50; i++ {
+			s := 1 + 5*e.game.random.Float64()
+			d := math.Pi * 2 * e.game.random.Float64()
+			f := &EnemyFragment{
+				pos: e.pos.Clone(),
+				v:   mathutil.NewVector2D(s*math.Cos(d), s*math.Sin(d)),
+			}
+			e.game.enemyFragments = append(e.game.enemyFragments, f)
 		}
 	}
 
@@ -149,14 +174,18 @@ func (e *Enemy) update() error {
 }
 
 func (e *Enemy) draw(dst *ebiten.Image) {
-	opts := &ebiten.DrawImageOptions{}
-	w, h := enemyImg.Size()
-	opts.GeoM.Translate(-float64(w)/2, -float64(h)/2)
-	opts.GeoM.Rotate(float64(e.ticks) * math.Pi / 30)
-	opts.GeoM.Translate(e.pos.X, e.pos.Y)
-	dst.DrawImage(enemyImg, opts)
+	if !e.defeated() {
+		opts := &ebiten.DrawImageOptions{}
+		w, h := enemyImg.Size()
+		opts.GeoM.Translate(-float64(w)/2, -float64(h)/2)
+		opts.GeoM.Rotate(float64(e.ticks) * math.Pi / 30)
+		opts.GeoM.Translate(e.pos.X, e.pos.Y)
+		dst.DrawImage(enemyImg, opts)
 
-	e.drawLife(dst)
+		if e.life > 0 {
+			e.drawLife(dst)
+		}
+	}
 }
 
 func (e *Enemy) drawLife(dst *ebiten.Image) {
@@ -259,7 +288,7 @@ func (p *Player) update() error {
 		}
 	}
 
-	if !p.invincible() {
+	if !p.invincible() && p.life > 0 {
 		if p.ticks%5 == 0 {
 			for i := 0; i < 2; i++ {
 				pos := p.pos.Clone()
@@ -279,17 +308,19 @@ func (p *Player) update() error {
 }
 
 func (p *Player) draw(dst *ebiten.Image) {
-	opts := &ebiten.DrawImageOptions{}
-	w, h := playerImg.Size()
-	opts.GeoM.Translate(p.pos.X-float64(w)/2, p.pos.Y-float64(h)/2)
+	if p.life > 0 {
+		opts := &ebiten.DrawImageOptions{}
+		w, h := playerImg.Size()
+		opts.GeoM.Translate(p.pos.X-float64(w)/2, p.pos.Y-float64(h)/2)
 
-	if p.invincible() && p.ticks/10%2 == 0 {
-		opts.ColorScale.ScaleAlpha(0.2)
+		if p.invincible() && p.ticks/10%2 == 0 {
+			opts.ColorScale.ScaleAlpha(0.2)
+		}
+
+		dst.DrawImage(playerImg, opts)
+
+		p.drawLife(dst)
 	}
-
-	dst.DrawImage(playerImg, opts)
-
-	p.drawLife(dst)
 }
 
 func (p *Player) drawLife(dst *ebiten.Image) {
@@ -342,11 +373,11 @@ type BulletHitEffect struct {
 }
 
 func (e *BulletHitEffect) update() error {
+	e.ticks++
+
 	if e.ticks >= 60 {
 		e.finished = true
 	}
-
-	e.ticks++
 
 	return nil
 }
@@ -365,11 +396,11 @@ type PlayerHitEffect struct {
 }
 
 func (e *PlayerHitEffect) update() error {
+	e.ticks++
+
 	if e.ticks >= 60 {
 		e.finished = true
 	}
-
-	e.ticks++
 
 	return nil
 }
@@ -378,6 +409,54 @@ func (e *PlayerHitEffect) draw(dst *ebiten.Image) {
 	r := 60 * e.ticks / 60
 	c := color.RGBA{0xff, 0, 0, uint8(0xff * (1 - float64(e.ticks)/60))}
 	vector.StrokeCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(r), 2, c, true)
+}
+
+type FlashEffect struct {
+	ticks    int
+	pos      *mathutil.Vector2D
+	r        float64
+	color    color.Color
+	until    int
+	finished bool
+}
+
+func (e *FlashEffect) update() error {
+	e.ticks++
+
+	if e.ticks >= e.until {
+		e.finished = true
+	}
+
+	return nil
+}
+
+func (e *FlashEffect) draw(dst *ebiten.Image) {
+	rad := e.r * float64(e.ticks) / float64(e.until)
+	r, g, b, a := e.color.RGBA()
+	c := color.RGBA{uint8(r), uint8(g), uint8(b), uint8(float64(a) * (1 - float64(e.ticks)/float64(e.until)))}
+	vector.DrawFilledCircle(dst, float32(e.pos.X), float32(e.pos.Y), float32(rad), c, true)
+}
+
+type EnemyFragment struct {
+	ticks int
+	pos   *mathutil.Vector2D
+	v     *mathutil.Vector2D
+}
+
+func (f *EnemyFragment) update() error {
+	f.pos = f.pos.Add(f.v)
+	f.ticks++
+	return nil
+}
+
+func (f *EnemyFragment) draw(dst *ebiten.Image) {
+	opts := &ebiten.DrawImageOptions{}
+	w, h := enemyImg.Size()
+	opts.GeoM.Translate(-float64(w)/2, -float64(h)/2)
+	opts.GeoM.Scale(10/float64(w), 10/float64(h))
+	opts.GeoM.Rotate(float64(f.ticks) * math.Pi / 15)
+	opts.GeoM.Translate(f.pos.X, f.pos.Y)
+	dst.DrawImage(enemyImg, opts)
 }
 
 type GameMode int
@@ -399,6 +478,8 @@ type Game struct {
 	playerBullets      []*PlayerBullet
 	bulletHitEffects   []*BulletHitEffect
 	playerHitEffects   []*PlayerHitEffect
+	flashEffects       []*FlashEffect
+	enemyFragments     []*EnemyFragment
 }
 
 func (g *Game) Update() error {
@@ -506,6 +587,18 @@ func (g *Game) Update() error {
 			}
 		}
 
+		for _, e := range g.flashEffects {
+			if err := e.update(); err != nil {
+				return err
+			}
+		}
+
+		for _, f := range g.enemyFragments {
+			if err := f.update(); err != nil {
+				return err
+			}
+		}
+
 		_bullets := g.bullets[:0]
 		for _, b := range g.bullets {
 			if !b.hit &&
@@ -541,6 +634,22 @@ func (g *Game) Update() error {
 		}
 		g.playerHitEffects = _playerHitEffects
 
+		_flashEffects := g.flashEffects[:0]
+		for _, e := range g.flashEffects {
+			if !e.finished {
+				_flashEffects = append(_flashEffects, e)
+			}
+		}
+		g.flashEffects = _flashEffects
+
+		_enemyFragments := g.enemyFragments[:0]
+		for _, f := range g.enemyFragments {
+			if f.pos.Sub(mathutil.NewVector2D(screenWidth/2, screenHeight/2)).NormSq() < 500*500 {
+				_enemyFragments = append(_enemyFragments, f)
+			}
+		}
+		g.enemyFragments = _enemyFragments
+
 		if g.player.life <= 0 || g.enemy.defeated() {
 			g.setNextMode(GameModeGameOver)
 		}
@@ -556,6 +665,30 @@ func (g *Game) Update() error {
 			}
 		}
 
+		for _, e := range g.bulletHitEffects {
+			if err := e.update(); err != nil {
+				return err
+			}
+		}
+
+		for _, e := range g.playerHitEffects {
+			if err := e.update(); err != nil {
+				return err
+			}
+		}
+
+		for _, e := range g.flashEffects {
+			if err := e.update(); err != nil {
+				return err
+			}
+		}
+
+		for _, f := range g.enemyFragments {
+			if err := f.update(); err != nil {
+				return err
+			}
+		}
+
 		_playerBullets := g.playerBullets[:0]
 		for _, b := range g.playerBullets {
 			if !b.hit &&
@@ -565,7 +698,39 @@ func (g *Game) Update() error {
 		}
 		g.playerBullets = _playerBullets
 
-		if g.ticksFromModeStart > 60 && len(g.touches) > 0 && g.touches[0].IsJustTouched() {
+		_bulletHitEffects := g.bulletHitEffects[:0]
+		for _, e := range g.bulletHitEffects {
+			if !e.finished {
+				_bulletHitEffects = append(_bulletHitEffects, e)
+			}
+		}
+		g.bulletHitEffects = _bulletHitEffects
+
+		_playerHitEffects := g.playerHitEffects[:0]
+		for _, e := range g.playerHitEffects {
+			if !e.finished {
+				_playerHitEffects = append(_playerHitEffects, e)
+			}
+		}
+		g.playerHitEffects = _playerHitEffects
+
+		_flashEffects := g.flashEffects[:0]
+		for _, e := range g.flashEffects {
+			if !e.finished {
+				_flashEffects = append(_flashEffects, e)
+			}
+		}
+		g.flashEffects = _flashEffects
+
+		_enemyFragments := g.enemyFragments[:0]
+		for _, f := range g.enemyFragments {
+			if f.pos.Sub(mathutil.NewVector2D(screenWidth/2, screenHeight/2)).NormSq() < 500*500 {
+				_enemyFragments = append(_enemyFragments, f)
+			}
+		}
+		g.enemyFragments = _enemyFragments
+
+		if g.ticksFromModeStart > 300 && len(g.touches) > 0 && g.touches[0].IsJustTouched() {
 			g.initialize()
 		}
 	}
@@ -623,6 +788,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		for _, e := range g.playerHitEffects {
 			e.draw(screen)
 		}
+
+		for _, e := range g.flashEffects {
+			e.draw(screen)
+		}
+
+		for _, f := range g.enemyFragments {
+			f.draw(screen)
+		}
 	case GameModeGameOver:
 		g.player.draw(screen)
 
@@ -642,6 +815,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 		for _, e := range g.playerHitEffects {
 			e.draw(screen)
+		}
+
+		for _, e := range g.flashEffects {
+			e.draw(screen)
+		}
+
+		for _, f := range g.enemyFragments {
+			f.draw(screen)
 		}
 
 		g.drawGameOverText(screen)
@@ -715,17 +896,21 @@ func (g *Game) initialize() {
 
 	enemyPos := mathutil.NewVector2D(enemyHomeX, enemyHomeY)
 	g.enemy = &Enemy{
-		pos:           enemyPos,
-		prevPos:       enemyPos,
-		r:             enemyR,
-		bulletMLIndex: -1,
-		game:          g,
+		pos:                 enemyPos,
+		prevPos:             enemyPos,
+		r:                   enemyR,
+		bulletMLIndex:       -1,
+		startNextBulletMLAt: -1,
+		explodeAt:           -1,
+		game:                g,
 	}
 
 	g.bullets = nil
 	g.playerBullets = nil
 	g.bulletHitEffects = nil
 	g.playerHitEffects = nil
+	g.flashEffects = nil
+	g.enemyFragments = nil
 
 	g.setNextMode(GameModeTitle)
 }
