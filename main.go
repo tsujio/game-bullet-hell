@@ -12,7 +12,6 @@ import (
 	"strconv"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/text"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 	"github.com/tsujio/game-bullet-hell/touchutil"
@@ -39,6 +38,9 @@ var resources embed.FS
 
 var (
 	fontL, fontM, fontS = resourceutil.ForceLoadFont(resources, "resources/PressStart2P-Regular.ttf", nil)
+	_, _, fontSS        = resourceutil.ForceLoadFont(resources, "resources/PressStart2P-Regular.ttf", &resourceutil.LoadFontOption{
+		SmallSize: 8,
+	})
 	emptyImg,
 	playerImg,
 	playerBulletImg,
@@ -185,7 +187,7 @@ func (e *Enemy) update() error {
 
 	if e.ticks == e.explodeAt && e.state == EnemyStateFlashing {
 		for i := 0; i < 50; i++ {
-			s := 1 + 5*e.game.random.Float64()
+			s := 2 + 4*e.game.random.Float64()
 			d := math.Pi * 2 * e.game.random.Float64()
 			f := &EnemyFragment{
 				pos: e.pos.Clone(),
@@ -240,7 +242,7 @@ func (e *Enemy) drawLife(dst *ebiten.Image) {
 		vs[i].ColorR = 0
 		vs[i].ColorG = 0
 		vs[i].ColorB = 0
-		vs[i].ColorA = 0.5
+		vs[i].ColorA = 0.3
 	}
 
 	opts := &ebiten.DrawTrianglesOptions{}
@@ -551,6 +553,14 @@ func (g *Game) Update() error {
 			) {
 				b.hit = true
 				g.enemy.hit = true
+
+				f := &FlashEffect{
+					pos:   b.pos.Clone().Add(mathutil.NewVector2D(10*g.random.Float64()-5, 10*g.random.Float64()-5)),
+					r:     10,
+					color: color.Gray{0x70},
+					until: 25,
+				}
+				g.flashEffects = append(g.flashEffects, f)
 			}
 		}
 
@@ -706,6 +716,20 @@ func (g *Game) drawGameOverText(screen *ebiten.Image) {
 	}
 }
 
+func (g *Game) drawTopMenu(screen *ebiten.Image) {
+	text.Draw(screen, fmt.Sprintf("%.1ffps", ebiten.ActualFPS()), fontSS.Face, 5, 15, color.Gray{0x70})
+
+	for i := 0; i < len(bulletMLs)-g.enemy.bulletMLIndex; i++ {
+		opts := &ebiten.DrawImageOptions{}
+		w, h := enemyImg.Size()
+		opts.GeoM.Translate(-float64(w)/2, -float64(h)/2)
+		opts.GeoM.Scale(7/float64(w), 7/float64(h))
+		opts.GeoM.Translate(float64(90+11*i), 11)
+		opts.ColorScale.ScaleAlpha(0.5)
+		screen.DrawImage(enemyImg, opts)
+	}
+}
+
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.White)
 
@@ -755,7 +779,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.drawGameOverText(screen)
 	}
 
-	ebitenutil.DebugPrint(screen, fmt.Sprintf("%.1ffps", ebiten.ActualFPS()))
+	g.drawTopMenu(screen)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
