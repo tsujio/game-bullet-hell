@@ -72,8 +72,8 @@ func init() {
 		img = ebiten.NewImage(70, 70)
 		w, _ := img.Size()
 		for i, n := 0, life-1; i < n; i++ {
-			x := float32(float64(w)/2 + (float64(w)/2-2)*math.Cos(math.Pi*2*float64(i)/float64(n)))
-			y := float32(float64(w)/2 + (float64(w)/2-2)*math.Sin(math.Pi*2*float64(i)/float64(n)))
+			x := float32(float64(w)/2 + (float64(w)/2-2)*math.Cos(math.Pi*2*float64(i)/float64(n)-math.Pi/2))
+			y := float32(float64(w)/2 + (float64(w)/2-2)*math.Sin(math.Pi*2*float64(i)/float64(n)-math.Pi/2))
 			vector.DrawFilledCircle(img, x, y, 2, color.RGBA{0, 0, 0, 0x70}, true)
 		}
 		playerLifeImgs = append(playerLifeImgs, img)
@@ -487,7 +487,11 @@ func (g *Game) Update() error {
 
 	switch g.mode {
 	case GameModeTitle:
-		g.setNextMode(GameModePlaying)
+		if len(g.touches) > 0 && g.touches[0].IsJustTouched() {
+			g.player.pos = mathutil.NewVector2D(playerHomeX, playerHomeY)
+
+			g.setNextMode(GameModePlaying)
+		}
 
 	case GameModePlaying:
 		if !g.player.invincible() {
@@ -515,8 +519,6 @@ func (g *Game) Update() error {
 					b.hit = true
 					g.player.hit = true
 
-					g.touches = nil
-
 					_bullets := g.bullets[:0]
 					for _, b := range g.bullets {
 						if b.pos.Sub(mathutil.NewVector2D(playerHomeX, playerHomeY)).NormSq() > 300*300 {
@@ -533,16 +535,27 @@ func (g *Game) Update() error {
 					}
 					g.bullets = _bullets
 
-					f := &FlashEffect{
-						pos:   g.player.pos.Clone(),
-						r:     40,
-						color: color.RGBA{0xff, 0, 0, 0xff},
-						until: 25,
-					}
-					g.flashEffects = append(g.flashEffects, f)
-
 					break
 				}
+			}
+
+			if mathutil.CapsulesCollide(
+				g.player.pos, g.player.prevPos.Sub(g.player.pos), g.player.r,
+				g.enemy.pos, g.enemy.prevPos.Sub(g.enemy.pos), g.enemy.r,
+			) {
+				g.player.hit = true
+			}
+
+			if g.player.hit {
+				g.touches = nil
+
+				f := &FlashEffect{
+					pos:   g.player.pos.Clone(),
+					r:     40,
+					color: color.RGBA{0xff, 0, 0, 0xff},
+					until: 25,
+				}
+				g.flashEffects = append(g.flashEffects, f)
 			}
 		}
 
@@ -699,6 +712,23 @@ func (g *Game) Update() error {
 	return nil
 }
 
+func (g *Game) drawTitleText(screen *ebiten.Image) {
+	titleTexts := []string{"BULLET HELL"}
+	for i, s := range titleTexts {
+		text.Draw(screen, s, fontL.Face, screenWidth/2-len(s)*int(fontL.FaceOptions.Size)/2, 85+i*int(fontL.FaceOptions.Size*1.8), color.Black)
+	}
+
+	usageTexts := []string{"[DRAG] Move"}
+	for i, s := range usageTexts {
+		text.Draw(screen, s, fontS.Face, screenWidth/2-len(s)*int(fontS.FaceOptions.Size)/2, 280+i*int(fontS.FaceOptions.Size*1.8), color.Black)
+	}
+
+	creditTexts := []string{"CREATOR: NAOKI TSUJIO", "FONT: Press Start 2P by CodeMan38", "SOUND EFFECT: MaouDamashii", "POWERED BY Ebitengine"}
+	for i, s := range creditTexts {
+		text.Draw(screen, s, fontS.Face, screenWidth/2-len(s)*int(fontS.FaceOptions.Size)/2, 400+i*int(fontS.FaceOptions.Size*1.8), color.Black)
+	}
+}
+
 func (g *Game) drawGameOverText(screen *ebiten.Image) {
 	var gameOverTexts []string
 	if g.enemy.state == EnemyStateExploded {
@@ -735,6 +765,11 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	switch g.mode {
 	case GameModeTitle:
+		g.player.draw(screen)
+
+		g.enemy.draw(screen)
+
+		g.drawTitleText(screen)
 	case GameModePlaying:
 		g.player.draw(screen)
 
@@ -755,6 +790,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		for _, f := range g.enemyFragments {
 			f.draw(screen)
 		}
+
+		g.drawTopMenu(screen)
 	case GameModeGameOver:
 		g.player.draw(screen)
 
@@ -777,9 +814,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 
 		g.drawGameOverText(screen)
-	}
 
-	g.drawTopMenu(screen)
+		g.drawTopMenu(screen)
+	}
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
@@ -836,16 +873,17 @@ func (g *Game) setNextMode(mode GameMode) {
 func (g *Game) initialize() {
 	g.touches = nil
 
-	playerPos := mathutil.NewVector2D(playerHomeX, playerHomeY)
+	playerPos := mathutil.NewVector2D(playerHomeX, playerHomeY-45)
 	g.player = &Player{
-		pos:     playerPos,
-		prevPos: playerPos,
-		r:       playerR,
-		life:    playerInitialLife,
-		game:    g,
+		pos:             playerPos,
+		prevPos:         playerPos,
+		r:               playerR,
+		life:            playerInitialLife,
+		invincibleUntil: -1,
+		game:            g,
 	}
 
-	enemyPos := mathutil.NewVector2D(enemyHomeX, enemyHomeY)
+	enemyPos := mathutil.NewVector2D(enemyHomeX, enemyHomeY+80)
 	g.enemy = &Enemy{
 		pos:                 enemyPos,
 		prevPos:             enemyPos,
