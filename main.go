@@ -25,6 +25,7 @@ const (
 	screenWidth              = 640
 	screenHeight             = 480
 	playerR                  = 4
+	playerGrazeR             = 6
 	playerBulletR            = 3
 	enemyR                   = 20
 	bulletR                  = 3
@@ -282,6 +283,7 @@ type Player struct {
 	ticks           int
 	pos, prevPos    *mathutil.Vector2D
 	r               float64
+	grazeR          float64
 	invincibleUntil int
 	hit             bool
 	life            int
@@ -475,6 +477,7 @@ type Game struct {
 	playerBullets      []*PlayerBullet
 	flashEffects       []*FlashEffect
 	enemyFragments     []*EnemyFragment
+	graze              int
 }
 
 func (g *Game) Update() error {
@@ -495,10 +498,10 @@ func (g *Game) Update() error {
 
 	case GameModePlaying:
 		if !g.player.invincible() {
-			playerTopLeftX := math.Min(g.player.pos.X-g.player.r, g.player.prevPos.X-g.player.r)
-			playerTopLeftY := math.Min(g.player.pos.Y-g.player.r, g.player.prevPos.Y-g.player.r)
-			playerBottomRightX := math.Max(g.player.pos.X+g.player.r, g.player.prevPos.X+g.player.r)
-			playerBottomRightY := math.Max(g.player.pos.Y+g.player.r, g.player.prevPos.Y+g.player.r)
+			playerTopLeftX := math.Min(g.player.pos.X-g.player.grazeR, g.player.prevPos.X-g.player.grazeR)
+			playerTopLeftY := math.Min(g.player.pos.Y-g.player.grazeR, g.player.prevPos.Y-g.player.grazeR)
+			playerBottomRightX := math.Max(g.player.pos.X+g.player.grazeR, g.player.prevPos.X+g.player.grazeR)
+			playerBottomRightY := math.Max(g.player.pos.Y+g.player.grazeR, g.player.prevPos.Y+g.player.grazeR)
 			for _, b := range g.bullets {
 				bulletTopLeftX := math.Min(b.pos.X-b.r, b.prevPos.X-b.r)
 				bulletTopLeftY := math.Min(b.pos.Y-b.r, b.prevPos.Y-b.r)
@@ -512,30 +515,39 @@ func (g *Game) Update() error {
 					continue
 				}
 
+				playerV := g.player.prevPos.Sub(g.player.pos)
+				bulletV := b.prevPos.Sub(b.pos)
 				if mathutil.CapsulesCollide(
-					g.player.pos, g.player.prevPos.Sub(g.player.pos), g.player.r,
-					b.pos, b.prevPos.Sub(b.pos), b.r,
+					g.player.pos, playerV, g.player.grazeR,
+					b.pos, bulletV, b.r,
 				) {
-					b.hit = true
-					g.player.hit = true
+					g.graze += 100
 
-					_bullets := g.bullets[:0]
-					for _, b := range g.bullets {
-						if b.pos.Sub(mathutil.NewVector2D(playerHomeX, playerHomeY)).NormSq() > 300*300 {
-							_bullets = append(_bullets, b)
-						} else {
-							f := &FlashEffect{
-								pos:   b.pos.Clone(),
-								r:     10,
-								color: color.Gray{0x70},
-								until: 25,
+					if mathutil.CapsulesCollide(
+						g.player.pos, playerV, g.player.r,
+						b.pos, bulletV, b.r,
+					) {
+						b.hit = true
+						g.player.hit = true
+
+						_bullets := g.bullets[:0]
+						for _, b := range g.bullets {
+							if b.pos.Sub(mathutil.NewVector2D(playerHomeX, playerHomeY)).NormSq() > 300*300 {
+								_bullets = append(_bullets, b)
+							} else {
+								f := &FlashEffect{
+									pos:   b.pos.Clone(),
+									r:     10,
+									color: color.Gray{0x70},
+									until: 25,
+								}
+								g.flashEffects = append(g.flashEffects, f)
 							}
-							g.flashEffects = append(g.flashEffects, f)
 						}
-					}
-					g.bullets = _bullets
+						g.bullets = _bullets
 
-					break
+						break
+					}
 				}
 			}
 
@@ -740,7 +752,7 @@ func (g *Game) drawGameOverText(screen *ebiten.Image) {
 		text.Draw(screen, s, fontL.Face, screenWidth/2-len(s)*int(fontL.FaceOptions.Size)/2, 170+i*int(fontL.FaceOptions.Size*1.8), color.Black)
 	}
 
-	scoreText := []string{"YOUR SCORE IS", fmt.Sprintf("%d!", 100)}
+	scoreText := []string{"YOUR SCORE IS", fmt.Sprintf("%s!", commaInt(g.score()))}
 	for i, s := range scoreText {
 		text.Draw(screen, s, fontM.Face, screenWidth/2-len(s)*int(fontM.FaceOptions.Size)/2, 230+i*int(fontM.FaceOptions.Size*1.8), color.Black)
 	}
@@ -758,6 +770,9 @@ func (g *Game) drawTopMenu(screen *ebiten.Image) {
 		opts.ColorScale.ScaleAlpha(0.5)
 		screen.DrawImage(enemyImg, opts)
 	}
+
+	scoreText := fmt.Sprintf("SCORE %s", commaInt(g.score()))
+	text.Draw(screen, scoreText, fontSS.Face, screenWidth-5-len(scoreText)*8, 15, color.Gray{0x70})
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
@@ -865,6 +880,24 @@ func (g *Game) setBulletML(index int) error {
 	return nil
 }
 
+func (g *Game) score() int {
+	return g.graze
+}
+
+func commaInt(v int) string {
+	s := []byte(strconv.Itoa(v))
+	cnt := (len(s) - 1) / 3
+	r := make([]byte, len(s)+cnt)
+	for i := len(s) - 1; i >= 0; i-- {
+		r[i+cnt] = s[i]
+		if (len(s)-i)%3 == 0 && i > 0 {
+			cnt--
+			r[i+cnt] = byte(',')
+		}
+	}
+	return string(r)
+}
+
 func (g *Game) setNextMode(mode GameMode) {
 	g.mode = mode
 	g.ticksFromModeStart = 0
@@ -878,6 +911,7 @@ func (g *Game) initialize() {
 		pos:             playerPos,
 		prevPos:         playerPos,
 		r:               playerR,
+		grazeR:          playerGrazeR,
 		life:            playerInitialLife,
 		invincibleUntil: -1,
 		game:            g,
@@ -898,6 +932,7 @@ func (g *Game) initialize() {
 	g.playerBullets = nil
 	g.flashEffects = nil
 	g.enemyFragments = nil
+	g.graze = 0
 
 	g.setNextMode(GameModeTitle)
 }
