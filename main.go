@@ -32,8 +32,9 @@ const (
 	playerHomeX, playerHomeY = screenWidth / 2, screenHeight * 4 / 5
 	enemyHomeX, enemyHomeY   = screenWidth / 2, screenHeight * 1 / 5
 	playerInitialLife        = 6
-	bulletMLGain             = 10000
-	failureGain              = -1000
+	bulletMLGain             = 1000
+	zeroFailureGain          = 1000
+	oneFailureGain           = 500
 	grazeGain                = 10
 )
 
@@ -167,7 +168,12 @@ func (e *Enemy) update() error {
 				e.game.flashEffects = append(e.game.flashEffects, f)
 			}
 
-			e.game.score += int(math.Max(float64(bulletMLGain+e.game.failuresInBulletMLRunning*failureGain), 0))
+			e.game.score += bulletMLGain
+			if e.game.failuresInBulletMLRunning == 0 {
+				e.game.score += zeroFailureGain
+			} else if e.game.failuresInBulletMLRunning == 1 {
+				e.game.score += oneFailureGain
+			}
 			e.game.failuresInBulletMLRunning = 0
 
 			e.runner = nil
