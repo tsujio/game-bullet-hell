@@ -958,6 +958,8 @@ func (g *Game) initialize() {
 	g.flashEffects = nil
 	g.enemyFragments = nil
 	g.graze = 0
+	g.failuresInBulletMLRunning = 0
+	g.score = 0
 
 	g.setNextMode(GameModeTitle)
 }
