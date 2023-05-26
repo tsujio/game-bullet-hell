@@ -25,13 +25,16 @@ const (
 	screenWidth              = 640
 	screenHeight             = 480
 	playerR                  = 4
-	playerGrazeR             = 6
+	playerGrazeR             = 8
 	playerBulletR            = 3
 	enemyR                   = 20
 	bulletR                  = 3
 	playerHomeX, playerHomeY = screenWidth / 2, screenHeight * 4 / 5
 	enemyHomeX, enemyHomeY   = screenWidth / 2, screenHeight * 1 / 5
 	playerInitialLife        = 6
+	bulletMLGain             = 10000
+	failureGain              = -1000
+	grazeGain                = 10
 )
 
 //go:embed resources/*.ttf resources/*.xml
@@ -134,75 +137,81 @@ type Enemy struct {
 func (e *Enemy) update() error {
 	e.prevPos = e.pos.Clone()
 
-	if e.hit {
-		if e.state == EnemyStateRunning {
-			e.life -= 0.5
-		}
-		e.hit = false
-	}
+	switch e.state {
+	case EnemyStateWaiting:
+		home := mathutil.NewVector2D(enemyHomeX, enemyHomeY)
+		e.pos = e.pos.Add(home.Sub(e.pos).Div(60))
 
-	if e.state == EnemyStateRunning {
+		if e.ticks == e.startNextBulletMLAt {
+			e.game.setBulletML(e.bulletMLIndex)
+			e.state = EnemyStateRunning
+		}
+	case EnemyStateRunning:
 		if err := e.runner.Update(); err != nil {
 			return err
 		}
 		e.pos.X, e.pos.Y = e.runner.Position()
-	} else if e.state == EnemyStateWaiting {
-		home := mathutil.NewVector2D(enemyHomeX, enemyHomeY)
-		e.pos = e.pos.Add(home.Sub(e.pos).Div(60))
-	}
 
-	if e.life <= 0 && e.state == EnemyStateRunning {
-		for _, b := range e.game.bullets {
+		if e.hit {
+			e.life -= 0.5
+		}
+
+		if e.life <= 0 {
+			for _, b := range e.game.bullets {
+				f := &FlashEffect{
+					pos:   b.pos.Clone(),
+					r:     10,
+					color: color.Gray{0x70},
+					until: 25,
+				}
+				e.game.flashEffects = append(e.game.flashEffects, f)
+			}
+
+			e.game.score += int(math.Max(float64(bulletMLGain+e.game.failuresInBulletMLRunning*failureGain), 0))
+			e.game.failuresInBulletMLRunning = 0
+
+			e.runner = nil
+			e.game.bullets = nil
+			e.bulletMLIndex++
+
+			if e.bulletMLIndex < len(bulletMLs) {
+				e.startNextBulletMLAt = e.ticks + 180
+				e.life = 100
+				e.state = EnemyStateWaiting
+			} else {
+				e.explodeAt = e.ticks + 120
+				e.state = EnemyStateFlashing
+			}
+		}
+	case EnemyStateFlashing:
+		if e.ticks%15 == 0 {
 			f := &FlashEffect{
-				pos:   b.pos.Clone(),
-				r:     10,
-				color: color.Gray{0x70},
-				until: 25,
+				pos:   e.pos.Clone().Add(mathutil.NewVector2D(50*e.game.random.Float64()-25, 50*e.game.random.Float64()-25)),
+				r:     60,
+				color: color.Black,
+				until: 30,
 			}
 			e.game.flashEffects = append(e.game.flashEffects, f)
 		}
 
-		e.runner = nil
-		e.game.bullets = nil
-		e.bulletMLIndex++
-
-		if e.bulletMLIndex < len(bulletMLs) {
-			e.startNextBulletMLAt = e.ticks + 180
-			e.life = 100
-			e.state = EnemyStateWaiting
-		} else {
-			e.explodeAt = e.ticks + 120
-			e.state = EnemyStateFlashing
-		}
-	}
-
-	if e.ticks < e.explodeAt && e.ticks%15 == 0 && e.state == EnemyStateFlashing {
-		f := &FlashEffect{
-			pos:   e.pos.Clone().Add(mathutil.NewVector2D(50*e.game.random.Float64()-25, 50*e.game.random.Float64()-25)),
-			r:     60,
-			color: color.Black,
-			until: 30,
-		}
-		e.game.flashEffects = append(e.game.flashEffects, f)
-	}
-
-	if e.ticks == e.explodeAt && e.state == EnemyStateFlashing {
-		for i := 0; i < 50; i++ {
-			s := 2 + 4*e.game.random.Float64()
-			d := math.Pi * 2 * e.game.random.Float64()
-			f := &EnemyFragment{
-				pos: e.pos.Clone(),
-				v:   mathutil.NewVector2D(s*math.Cos(d), s*math.Sin(d)),
+		if e.ticks == e.explodeAt {
+			for i := 0; i < 50; i++ {
+				s := 2 + 4*e.game.random.Float64()
+				d := math.Pi * 2 * e.game.random.Float64()
+				f := &EnemyFragment{
+					pos: e.pos.Clone(),
+					v:   mathutil.NewVector2D(s*math.Cos(d), s*math.Sin(d)),
+				}
+				e.game.enemyFragments = append(e.game.enemyFragments, f)
 			}
-			e.game.enemyFragments = append(e.game.enemyFragments, f)
-		}
 
-		e.state = EnemyStateExploded
+			e.state = EnemyStateExploded
+		}
+	case EnemyStateExploded:
 	}
 
-	if e.ticks == e.startNextBulletMLAt && e.state == EnemyStateWaiting {
-		e.game.setBulletML(e.bulletMLIndex)
-		e.state = EnemyStateRunning
+	if e.hit {
+		e.hit = false
 	}
 
 	e.ticks++
@@ -254,6 +263,7 @@ type Bullet struct {
 	pos, prevPos *mathutil.Vector2D
 	r            float64
 	hit          bool
+	grazed       bool
 	runner       bulletml.BulletRunner
 	game         *Game
 }
@@ -301,6 +311,7 @@ func (p *Player) update() error {
 		p.pos = mathutil.NewVector2D(playerHomeX, playerHomeY)
 		p.invincibleUntil = p.ticks + 60*3
 		p.life--
+		p.game.failuresInBulletMLRunning++
 		p.hit = false
 	}
 
@@ -407,6 +418,7 @@ type FlashEffect struct {
 	ticks    int
 	pos      *mathutil.Vector2D
 	r        float64
+	v        *mathutil.Vector2D
 	color    color.Color
 	until    int
 	finished bool
@@ -414,6 +426,10 @@ type FlashEffect struct {
 
 func (e *FlashEffect) update() error {
 	e.ticks++
+
+	if e.v != nil {
+		e.pos = e.pos.Add(e.v)
+	}
 
 	if e.ticks >= e.until {
 		e.finished = true
@@ -467,17 +483,19 @@ const (
 )
 
 type Game struct {
-	touches            []touchutil.Touch
-	random             *rand.Rand
-	mode               GameMode
-	ticksFromModeStart uint64
-	player             *Player
-	enemy              *Enemy
-	bullets            []*Bullet
-	playerBullets      []*PlayerBullet
-	flashEffects       []*FlashEffect
-	enemyFragments     []*EnemyFragment
-	graze              int
+	touches                   []touchutil.Touch
+	random                    *rand.Rand
+	mode                      GameMode
+	ticksFromModeStart        uint64
+	player                    *Player
+	enemy                     *Enemy
+	bullets                   []*Bullet
+	playerBullets             []*PlayerBullet
+	flashEffects              []*FlashEffect
+	enemyFragments            []*EnemyFragment
+	score                     int
+	graze                     int
+	failuresInBulletMLRunning int
 }
 
 func (g *Game) Update() error {
@@ -517,37 +535,48 @@ func (g *Game) Update() error {
 
 				playerV := g.player.prevPos.Sub(g.player.pos)
 				bulletV := b.prevPos.Sub(b.pos)
-				if mathutil.CapsulesCollide(
+				if !b.grazed && mathutil.CapsulesCollide(
 					g.player.pos, playerV, g.player.grazeR,
 					b.pos, bulletV, b.r,
 				) {
-					g.graze += 100
+					g.graze++
+					g.score += grazeGain
 
-					if mathutil.CapsulesCollide(
-						g.player.pos, playerV, g.player.r,
-						b.pos, bulletV, b.r,
-					) {
-						b.hit = true
-						g.player.hit = true
-
-						_bullets := g.bullets[:0]
-						for _, b := range g.bullets {
-							if b.pos.Sub(mathutil.NewVector2D(playerHomeX, playerHomeY)).NormSq() > 300*300 {
-								_bullets = append(_bullets, b)
-							} else {
-								f := &FlashEffect{
-									pos:   b.pos.Clone(),
-									r:     10,
-									color: color.Gray{0x70},
-									until: 25,
-								}
-								g.flashEffects = append(g.flashEffects, f)
-							}
-						}
-						g.bullets = _bullets
-
-						break
+					f := &FlashEffect{
+						pos:   b.pos.Add(g.player.pos).Div(2),
+						v:     b.pos.Sub(g.player.pos).Normalize().Mul(0.25),
+						r:     7,
+						color: color.RGBA{0xff, 0, 0, 0x70},
+						until: 25,
 					}
+					g.flashEffects = append(g.flashEffects, f)
+					b.grazed = true
+				}
+
+				if mathutil.CapsulesCollide(
+					g.player.pos, playerV, g.player.r,
+					b.pos, bulletV, b.r,
+				) {
+					b.hit = true
+					g.player.hit = true
+
+					_bullets := g.bullets[:0]
+					for _, b := range g.bullets {
+						if b.pos.Sub(mathutil.NewVector2D(playerHomeX, playerHomeY)).NormSq() > 300*300 {
+							_bullets = append(_bullets, b)
+						} else {
+							f := &FlashEffect{
+								pos:   b.pos.Clone(),
+								r:     10,
+								color: color.Gray{0x70},
+								until: 25,
+							}
+							g.flashEffects = append(g.flashEffects, f)
+						}
+					}
+					g.bullets = _bullets
+
+					break
 				}
 			}
 
@@ -708,7 +737,7 @@ func (g *Game) Update() error {
 		}
 		g.enemyFragments = _enemyFragments
 
-		if g.ticksFromModeStart > 180 && len(g.touches) > 0 && g.touches[0].IsJustTouched() {
+		if g.ticksFromModeStart > 120 && len(g.touches) > 0 && g.touches[0].IsJustTouched() {
 			g.initialize()
 		}
 	}
@@ -752,7 +781,7 @@ func (g *Game) drawGameOverText(screen *ebiten.Image) {
 		text.Draw(screen, s, fontL.Face, screenWidth/2-len(s)*int(fontL.FaceOptions.Size)/2, 170+i*int(fontL.FaceOptions.Size*1.8), color.Black)
 	}
 
-	scoreText := []string{"YOUR SCORE IS", fmt.Sprintf("%s!", commaInt(g.score()))}
+	scoreText := []string{"YOUR SCORE IS", fmt.Sprintf("%s!", commaInt(g.score))}
 	for i, s := range scoreText {
 		text.Draw(screen, s, fontM.Face, screenWidth/2-len(s)*int(fontM.FaceOptions.Size)/2, 230+i*int(fontM.FaceOptions.Size*1.8), color.Black)
 	}
@@ -771,7 +800,7 @@ func (g *Game) drawTopMenu(screen *ebiten.Image) {
 		screen.DrawImage(enemyImg, opts)
 	}
 
-	scoreText := fmt.Sprintf("SCORE %s", commaInt(g.score()))
+	scoreText := fmt.Sprintf("SCORE %s", commaInt(g.score))
 	text.Draw(screen, scoreText, fontSS.Face, screenWidth-5-len(scoreText)*8, 15, color.Gray{0x70})
 }
 
@@ -878,10 +907,6 @@ func (g *Game) setBulletML(index int) error {
 	}
 
 	return nil
-}
-
-func (g *Game) score() int {
-	return g.graze
 }
 
 func commaInt(v int) string {
