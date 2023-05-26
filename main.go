@@ -535,48 +535,56 @@ func (g *Game) Update() error {
 
 				playerV := g.player.prevPos.Sub(g.player.pos)
 				bulletV := b.prevPos.Sub(b.pos)
-				if !b.grazed && mathutil.CapsulesCollide(
+				if mathutil.CapsulesCollide(
 					g.player.pos, playerV, g.player.grazeR,
 					b.pos, bulletV, b.r,
 				) {
-					g.graze++
-					g.score += grazeGain
+					if !b.grazed {
+						g.graze++
+						g.score += grazeGain
 
-					f := &FlashEffect{
-						pos:   b.pos.Add(g.player.pos).Div(2),
-						v:     b.pos.Sub(g.player.pos).Normalize().Mul(0.25),
-						r:     7,
-						color: color.RGBA{0xff, 0, 0, 0x70},
-						until: 25,
-					}
-					g.flashEffects = append(g.flashEffects, f)
-					b.grazed = true
-				}
+						b.grazed = true
 
-				if mathutil.CapsulesCollide(
-					g.player.pos, playerV, g.player.r,
-					b.pos, bulletV, b.r,
-				) {
-					b.hit = true
-					g.player.hit = true
-
-					_bullets := g.bullets[:0]
-					for _, b := range g.bullets {
-						if b.pos.Sub(mathutil.NewVector2D(playerHomeX, playerHomeY)).NormSq() > 300*300 {
-							_bullets = append(_bullets, b)
-						} else {
+						for i := 0; i < 3; i++ {
 							f := &FlashEffect{
-								pos:   b.pos.Clone(),
-								r:     10,
-								color: color.Gray{0x70},
-								until: 25,
+								pos: b.pos.Add(g.player.pos).Div(2),
+								v: b.pos.Sub(g.player.pos).Add(mathutil.NewVector2D(
+									5*g.random.NormFloat64(),
+									5*g.random.NormFloat64(),
+								)).Normalize().Mul(0.6 + 0.2*g.random.NormFloat64()),
+								r:     3,
+								color: color.RGBA{0x80, 0, 0, 0xff},
+								until: 15,
 							}
 							g.flashEffects = append(g.flashEffects, f)
 						}
 					}
-					g.bullets = _bullets
 
-					break
+					if mathutil.CapsulesCollide(
+						g.player.pos, playerV, g.player.r,
+						b.pos, bulletV, b.r,
+					) {
+						b.hit = true
+						g.player.hit = true
+
+						_bullets := g.bullets[:0]
+						for _, b := range g.bullets {
+							if b.pos.Sub(mathutil.NewVector2D(playerHomeX, playerHomeY)).NormSq() > 300*300 {
+								_bullets = append(_bullets, b)
+							} else {
+								f := &FlashEffect{
+									pos:   b.pos.Clone(),
+									r:     10,
+									color: color.Gray{0x70},
+									until: 25,
+								}
+								g.flashEffects = append(g.flashEffects, f)
+							}
+						}
+						g.bullets = _bullets
+
+						break
+					}
 				}
 			}
 
